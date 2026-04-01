@@ -2,34 +2,69 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "driver/gpio.h"
 #include <stdint.h>
 #include <stdbool.h>
 
-#define FIRMWARE_VERSION  "0.1.0"
-#define AP_SSID           "XJ40-Trigger"
-#define AP_IP             "192.168.4.1"
+#define FIRMWARE_VERSION     "0.1.0"
+#define AP_SSID              "XJ40-Trigger"
+#define AP_IP                "192.168.4.1"
 
-// Pin assignments — adjust to match final hardware
-#define PIN_TRIGGER_IN    4
-#define PIN_TRIGGER_OUT   5
-#define PIN_ENABLE        6    // active-low switch input
+// Pin assignments
+#define PIN_TRIGGER_IN       4
+#define PIN_TRIGGER_OUT      5
+#define PIN_ENABLE           6   // active-low switch input (pull-up enabled)
+                                 // LOW  = offset active, HIGH = bypass
 
+// Trigger wheel defaults
+#define DEFAULT_TEETH_TOTAL  36
+#define TEETH_MISSING        1
+
+// ---------------------------------------------------------------------------
+// Sync state
+// ---------------------------------------------------------------------------
+typedef enum {
+    SYNC_SEARCHING = 0,
+    SYNC_SYNCED    = 1,
+} SyncState_t;
+
+// ---------------------------------------------------------------------------
+// Web-settable shared state — mutex-protected, read/written by web task
+// ISR reads these lock-free (aligned types, atomic on 32-bit Xtensa)
+// ---------------------------------------------------------------------------
 extern SemaphoreHandle_t state_mutex;
 
-// Shared state between Core 0 (web) and Core 1 (ISR)
 typedef struct {
     int16_t  offset_tenths;   // -100..+100 (tenths of a degree)
-    uint32_t rpm;
-    bool     synced;
     bool     switch_mode;     // true = PIN_ENABLE controls offset bypass
-    uint8_t  teeth_total;     // default 36
+    uint8_t  teeth_total;     // total teeth including missing
 } State;
 
 extern State g_state;
 
-void shared_init(void);
+// ---------------------------------------------------------------------------
+// ISR-written volatile state
+// Written on Core 1, read on Core 0.  32-bit aligned types are atomic on
+// Xtensa — no mutex needed for individual reads.
+// ---------------------------------------------------------------------------
+extern volatile uint32_t    g_avg_tooth_period_us; // normalised per-tooth period (us)
+extern volatile bool        g_synced_isr;           // true once MT found and synced
+extern volatile uint32_t    g_isr_count;
+extern volatile SyncState_t g_sync_state;
+extern volatile uint8_t     g_teeth_counted;
+extern volatile bool        g_adv_clipped;
+extern volatile bool        g_nvm_dirty;
 
-// Mutex-safe accessors
+// ---------------------------------------------------------------------------
+// Init, NVS
+// ---------------------------------------------------------------------------
+void shared_init(void);
+void nvm_load(void);
+void nvm_save(void);
+
+// ---------------------------------------------------------------------------
+// Mutex-safe accessors (web task / Core 0)
+// ---------------------------------------------------------------------------
 int16_t  get_offset_tenths(void);
 void     set_offset_tenths(int16_t val);
 uint32_t get_rpm(void);
@@ -38,3 +73,16 @@ bool     get_switch_mode(void);
 void     set_switch_mode(bool val);
 uint8_t  get_teeth_total(void);
 void     set_teeth_total(uint8_t val);
+
+// ---------------------------------------------------------------------------
+// ISR-safe inline accessors (lock-free, Core 1)
+// g_state fields are aligned types — atomic reads on 32-bit Xtensa.
+// ---------------------------------------------------------------------------
+static inline IRAM_ATTR int16_t isr_get_offset_tenths(void) {
+    if (g_state.switch_mode && gpio_get_level((gpio_num_t)PIN_ENABLE)) return 0;
+    return g_state.offset_tenths;
+}
+
+static inline IRAM_ATTR uint8_t isr_get_teeth_total(void) {
+    return g_state.teeth_total;
+}

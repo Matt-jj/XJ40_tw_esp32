@@ -181,7 +181,6 @@ static void http_server_start(void) {
 // ---------------------------------------------------------------------------
 
 void web_task(void* arg) {
-    nvs_flash_init();
     esp_netif_init();
     esp_event_loop_create_default();
 

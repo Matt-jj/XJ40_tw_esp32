@@ -11,7 +11,7 @@ static const char WEB_UI_HTML[] = R"rawhtml(
   :root {
     --bg:      #0f0f1a;
     --card:    #1a1a2e;
-    --accent:  #e94560;
+    --accent:  #e87722;
     --text:    #e0e0e0;
     --muted:   #7a7a9a;
     --green:   #2ecc71;
@@ -36,7 +36,7 @@ static const char WEB_UI_HTML[] = R"rawhtml(
   .sync-ok  { background: rgba(46,204,113,0.15); color: var(--green); border: 1px solid var(--green); }
   .sync-no  { background: rgba(231,76,60,0.15);  color: var(--red);   border: 1px solid var(--red); }
 
-  /* Slider */
+  /* Offset slider */
   .offset-display { text-align: center; font-size: 2em; font-weight: bold;
                     color: var(--accent); margin-bottom: 12px; }
   input[type=range] {
@@ -48,33 +48,35 @@ static const char WEB_UI_HTML[] = R"rawhtml(
     background: var(--accent); cursor: pointer;
   }
   .range-labels { display: flex; justify-content: space-between;
-                  color: var(--muted); font-size: 0.75em; margin-top: 6px; }
+                  color: var(--text); font-size: 0.9em; margin-top: 4px; }
+  .range-dir { display: flex; justify-content: space-between;
+               color: var(--text); font-size: 0.9em; margin-top: 4px; font-style: italic; }
 
-  /* Toggle */
+  /* Config rows */
   .row { display: flex; justify-content: space-between; align-items: center;
          padding: 8px 0; border-bottom: 1px solid var(--border); }
   .row:last-child { border-bottom: none; }
   .row label { color: var(--text); font-size: 0.9em; }
   .row .sub  { color: var(--muted); font-size: 0.75em; }
-  .toggle { position: relative; width: 44px; height: 24px; }
-  .toggle input { opacity: 0; width: 0; height: 0; }
-  .slider-sw {
-    position: absolute; inset: 0; background: var(--border);
-    border-radius: 24px; cursor: pointer; transition: background 0.2s;
-  }
-  .slider-sw::before {
-    content: ''; position: absolute; width: 18px; height: 18px;
-    left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform 0.2s;
-  }
-  .toggle input:checked + .slider-sw { background: var(--accent); }
-  .toggle input:checked + .slider-sw::before { transform: translateX(20px); }
 
-  /* Number input */
-  input[type=number] {
-    background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 6px; padding: 4px 8px; width: 70px; text-align: center; font-size: 0.9em;
+  /* Radio button */
+  .radio-wrap { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .radio-wrap input[type=radio] {
+    -webkit-appearance: none; appearance: none;
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 2px solid var(--border); background: var(--bg);
+    cursor: pointer; transition: border-color 0.2s, background 0.2s;
+    flex-shrink: 0;
   }
-  input[type=number]:focus { outline: none; border-color: var(--accent); }
+  .radio-wrap input[type=radio]:checked {
+    border-color: var(--accent); background: var(--accent);
+    box-shadow: inset 0 0 0 4px var(--bg);
+  }
+  .radio-wrap span { color: var(--text); font-size: 0.9em; }
+
+  /* Teeth slider */
+  .teeth-display { text-align: center; font-size: 2em; font-weight: bold;
+                   color: var(--accent); margin-bottom: 12px; }
 
   .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
               display: inline-block; margin-right: 6px; }
@@ -85,7 +87,7 @@ static const char WEB_UI_HTML[] = R"rawhtml(
 <body>
 
 <h1>XJ40 Trigger</h1>
-<p class="ver">v)" FIRMWARE_VERSION R"rawhtml(</p>
+<p class="ver">v)rawhtml" FIRMWARE_VERSION R"rawhtml(</p>
 
 <!-- Status card -->
 <div class="card">
@@ -108,30 +110,31 @@ static const char WEB_UI_HTML[] = R"rawhtml(
   <div class="card-title">Timing Offset</div>
   <div class="offset-display" id="offset-display">0.0°</div>
   <input type="range" id="offset-slider"
-         min="-100" max="100" step="1" value="0">
-  <div class="range-labels"><span>-10°</span><span>0°</span><span>+10°</span></div>
+         min="-100" max="100" step="5" value="0">
+  <div class="range-labels">
+    <span>-10°</span><span>0°</span><span>+10°</span>
+  </div>
+  <div class="range-dir">
+    <span>◄ Retard</span><span>Advance ►</span>
+  </div>
 </div>
 
 <!-- Config card -->
 <div class="card">
   <div class="card-title">Configuration</div>
   <div class="row">
-    <div>
-      <div class="label">Switch Mode</div>
-      <div class="sub">Enable pin controls offset bypass</div>
-    </div>
-    <label class="toggle">
-      <input type="checkbox" id="switch-mode" onchange="sendConfig()">
-      <span class="slider-sw"></span>
+    <div class="label" id="switch-label">Remote Switch</div>
+    <label class="radio-wrap">
+      <input type="radio" id="switch-mode" onclick="toggleSwitch(this)">
+      <span>Enabled</span>
     </label>
   </div>
-  <div class="row">
-    <div>
-      <div class="label">Teeth Total</div>
-      <div class="sub">Including missing</div>
-    </div>
-    <input type="number" id="teeth" min="2" max="60" value="36"
-           onchange="sendConfig()">
+  <div class="row" style="flex-direction: column; align-items: stretch; gap: 4px;">
+    <div class="card-title" style="margin-bottom: 4px;">Trigger Wheel Teeth</div>
+    <div class="teeth-display" id="teeth-display">36</div>
+    <input type="range" id="teeth" min="8" max="60" step="1" value="36"
+           oninput="updateTeeth(this)" onchange="sendConfig()">
+    <div class="range-labels"><span>8</span><span>Total including missing tooth</span><span>60</span></div>
   </div>
 </div>
 
@@ -143,7 +146,7 @@ function fmt(tenths) {
   return (v >= 0 ? '+' : '') + v.toFixed(1) + '\u00b0';
 }
 
-// Slider interaction
+// Offset slider
 const slider = document.getElementById('offset-slider');
 const display = document.getElementById('offset-display');
 
@@ -154,9 +157,30 @@ slider.addEventListener('change', () => {
   sendOffset(parseInt(slider.value));
 });
 
+function updateTeeth(el) {
+  document.getElementById('teeth-display').textContent = parseInt(el.value);
+}
+
 function sendOffset(tenths) {
   fetch('/api/offset?value=' + tenths, { method: 'POST' })
     .catch(() => {});
+}
+
+// Remote switch radio — clicking a checked radio re-checks it (no deselect),
+// so we handle toggle manually.
+function setSwitchColour(checked) {
+  document.getElementById('switch-label').style.color = checked ? 'var(--green)' : 'var(--text)';
+}
+
+function toggleSwitch(el) {
+  if (el.dataset.wasChecked === 'true') {
+    el.checked = false;
+    el.dataset.wasChecked = 'false';
+  } else {
+    el.dataset.wasChecked = 'true';
+  }
+  setSwitchColour(el.checked);
+  sendConfig();
 }
 
 function sendConfig() {
@@ -182,15 +206,20 @@ function poll() {
         badge.className = 'sync-badge sync-no';
       }
 
-      // Only update slider if user isn't dragging
       if (d.offset_tenths !== lastOffset) {
         lastOffset = d.offset_tenths;
         slider.value = d.offset_tenths;
         display.textContent = fmt(d.offset_tenths);
       }
 
-      document.getElementById('switch-mode').checked = d.switch_mode;
-      document.getElementById('teeth').value = d.teeth;
+      const sw = document.getElementById('switch-mode');
+      sw.checked = d.switch_mode;
+      sw.dataset.wasChecked = d.switch_mode ? 'true' : 'false';
+      setSwitchColour(d.switch_mode);
+
+      const teethSlider = document.getElementById('teeth');
+      teethSlider.value = d.teeth;
+      updateTeeth(teethSlider);
 
       document.getElementById('conn-dot').className = 'conn-dot live';
       document.getElementById('conn-label').textContent = 'Live';

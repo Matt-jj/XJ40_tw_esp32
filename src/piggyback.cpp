@@ -95,7 +95,7 @@ static int16_t s_offset_current        = 0;
 // ISR — fires on both edges of PIN_TRIGGER_IN
 // ---------------------------------------------------------------------------
 static void trigger_isr(void*) {
-    g_isr_count = g_isr_count + 1;
+    g_isr_count = g_isr_count + 1;  // C++20: ++ on volatile is deprecated (misleading atomicity)
     const uint32_t now_us = (uint32_t)esp_timer_get_time();
     const bool     rising = gpio_get_level((gpio_num_t)PIN_TRIGGER_IN);
 

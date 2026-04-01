@@ -6,7 +6,7 @@ ESP-IDF framework via PlatformIO.
 ## Architecture
 
 - **Core 0** — WiFi AP, DNS captive portal, HTTP server (`web_task`)
-- **Core 1** — timing ISR, trigger wheel processing (stub — to be implemented)
+- **Core 1** — timing ISR, trigger wheel processing (`piggyback.cpp`)
 - Shared state protected by FreeRTOS `SemaphoreHandle_t state_mutex`
 
 ## Hardware (provisional — pins TBC)
@@ -41,7 +41,13 @@ pio device monitor            # serial debug at 115200
 
 ## TODO
 
-- [ ] **Timing ISR** — implement Core 1 trigger wheel processing (port from Pico project)
+- [x] **Timing ISR** — ported from Pico project, flashed and producing output
+- [ ] **Verify advance/retard offsets via logic analyser** — NEXT SESSION
+  - CSV capture `XJ40_esp32_01-04-26_sesh1` taken at 100kHz, 5° advance set on slider
+  - Analysis was interrupted: raw data around gap showed CH1 (TW) and CH2 (PB) both LOW simultaneously, suggesting signal polarity/phasing needs closer inspection
+  - Need to identify: which edge of CH1 is the tooth leading edge relative to CH2
+  - Approach: re-capture at **500kHz or 1MHz**, just 2-3 revolutions, to get ~2µs resolution and clearly resolve the advance delay (~695µs at 1200RPM)
+  - Also check: gap tooth passthrough behaviour (PB was +1410µs late on gap tooth — investigate if expected or a problem)
 - [ ] **Strip unused libraries** — once code is finalised, disable unused ESP-IDF components via `sdkconfig.defaults` to reduce flash usage and eliminate potential instability from unused code. Key candidates:
   - `CONFIG_BT_ENABLED=n` — Bluetooth (~80KB+)
   - `CONFIG_MBEDTLS_*` — TLS/SSL (~100KB, not needed for plain HTTP)
@@ -52,7 +58,8 @@ pio device monitor            # serial debug at 115200
 
 ## Key files
 
-- [src/main.cpp](src/main.cpp) — app_main, task creation
+- [src/main.cpp](src/main.cpp) — app_main, task creation, deferred NVM save
+- [src/piggyback.h](src/piggyback.h) / [src/piggyback.cpp](src/piggyback.cpp) — trigger wheel ISR, advance/retard timing
 - [src/shared.h](src/shared.h) / [src/shared.cpp](src/shared.cpp) — shared state, mutex, accessors
 - [src/web.h](src/web.h) / [src/web.cpp](src/web.cpp) — WiFi AP, DNS, HTTP server
 - [src/web_ui.h](src/web_ui.h) — embedded HTML/JS

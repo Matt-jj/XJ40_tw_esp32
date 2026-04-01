@@ -39,6 +39,17 @@ pio run --target upload       # build and flash
 pio device monitor            # serial debug at 115200
 ```
 
+## TODO
+
+- [ ] **Timing ISR** — implement Core 1 trigger wheel processing (port from Pico project)
+- [ ] **Strip unused libraries** — once code is finalised, disable unused ESP-IDF components via `sdkconfig.defaults` to reduce flash usage and eliminate potential instability from unused code. Key candidates:
+  - `CONFIG_BT_ENABLED=n` — Bluetooth (~80KB+)
+  - `CONFIG_MBEDTLS_*` — TLS/SSL (~100KB, not needed for plain HTTP)
+  - `CONFIG_ESP_COREDUMP_ENABLE=n` — core dump (useful in dev, remove for release)
+  - Log level → `CONFIG_LOG_DEFAULT_LEVEL_WARN=y` for release
+  - Run `pio run --target menuconfig` for interactive config browser
+- [ ] **OTA updates** — add dual OTA partition table before final installation (unit will be buried under dashboard). Size partitions based on final firmware size.
+
 ## Key files
 
 - [src/main.cpp](src/main.cpp) — app_main, task creation

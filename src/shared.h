@@ -37,7 +37,8 @@ extern SemaphoreHandle_t state_mutex;
 typedef struct {
     int16_t  offset_tenths;   // -100..+100 (tenths of a degree)
     bool     switch_mode;     // true = PIN_ENABLE controls offset bypass
-    uint8_t  teeth_total;     // total teeth including missing
+    uint8_t  teeth_total;     // manual override teeth count (incl. missing)
+    bool     teeth_manual;    // true = use teeth_total; false = use auto-detected
 } State;
 
 extern State g_state;
@@ -47,11 +48,15 @@ extern State g_state;
 // Written on Core 1, read on Core 0.  32-bit aligned types are atomic on
 // Xtensa — no mutex needed for individual reads.
 // ---------------------------------------------------------------------------
-extern volatile uint32_t    g_avg_tooth_period_us; // normalised per-tooth period (us)
-extern volatile bool        g_synced_isr;           // true once MT found and synced
+extern volatile uint32_t    g_avg_tooth_period_us;  // normalised per-tooth period (us)
+extern volatile uint32_t    g_avg_rev_period_us;    // gap-to-gap revolution period (us)
+extern volatile uint32_t    g_last_mt_us;           // esp_timer timestamp of last gap (us)
+extern volatile bool        g_synced_isr;            // true once MT found and synced
 extern volatile uint32_t    g_isr_count;
 extern volatile SyncState_t g_sync_state;
 extern volatile uint8_t     g_teeth_counted;
+extern volatile uint8_t     g_teeth_auto;           // auto-detected teeth count
+extern volatile bool        g_teeth_confirmed;       // true once stable for 10 revolutions
 extern volatile bool        g_adv_clipped;
 extern volatile bool        g_nvm_dirty;
 
@@ -73,6 +78,9 @@ bool     get_switch_mode(void);
 void     set_switch_mode(bool val);
 uint8_t  get_teeth_total(void);
 void     set_teeth_total(uint8_t val);
+bool     get_teeth_manual(void);
+void     set_teeth_manual(bool val);
+uint8_t  get_teeth_auto(void);
 
 // ---------------------------------------------------------------------------
 // ISR-safe inline accessors (lock-free, Core 1)
@@ -84,5 +92,7 @@ static inline IRAM_ATTR int16_t isr_get_offset_tenths(void) {
 }
 
 static inline IRAM_ATTR uint8_t isr_get_teeth_total(void) {
+    if (!g_state.teeth_manual && g_teeth_confirmed)
+        return g_teeth_auto;
     return g_state.teeth_total;
 }

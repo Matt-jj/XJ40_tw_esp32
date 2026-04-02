@@ -2,6 +2,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char* TAG = "shared";
 
@@ -17,16 +18,21 @@ State g_state = {
     .offset_tenths = 0,
     .switch_mode   = false,
     .teeth_total   = DEFAULT_TEETH_TOTAL,
+    .teeth_manual  = false,
 };
 
 // ---------------------------------------------------------------------------
 // ISR-written volatile state
 // ---------------------------------------------------------------------------
 volatile uint32_t    g_avg_tooth_period_us = 0;
+volatile uint32_t    g_avg_rev_period_us   = 0;
+volatile uint32_t    g_last_mt_us          = 0;
 volatile bool        g_synced_isr          = false;
 volatile uint32_t    g_isr_count           = 0;
 volatile SyncState_t g_sync_state          = SYNC_SEARCHING;
 volatile uint8_t     g_teeth_counted       = 0;
+volatile uint8_t     g_teeth_auto          = 0;
+volatile bool        g_teeth_confirmed     = false;
 volatile bool        g_adv_clipped         = false;
 volatile bool        g_nvm_dirty           = false;
 
@@ -45,9 +51,11 @@ void nvm_load(void) {
     int16_t off = 0;
     uint8_t teeth = DEFAULT_TEETH_TOTAL;
     uint8_t sw = 0;
-    nvs_get_i16(h, "offset", &off);
-    nvs_get_u8(h, "teeth",  &teeth);
-    nvs_get_u8(h, "sw_mode", &sw);
+    uint8_t tm = 0;
+    nvs_get_i16(h, "offset",  &off);
+    nvs_get_u8(h,  "teeth",   &teeth);
+    nvs_get_u8(h,  "sw_mode", &sw);
+    nvs_get_u8(h,  "teeth_m", &tm);
     nvs_close(h);
 
     if (off < -100) off = -100;
@@ -58,9 +66,10 @@ void nvm_load(void) {
     g_state.offset_tenths = off;
     g_state.teeth_total   = teeth;
     g_state.switch_mode   = (sw != 0);
+    g_state.teeth_manual  = (tm != 0);
 
-    ESP_LOGI(TAG, "NVS: loaded offset=%d teeth=%u sw_mode=%s",
-             off, teeth, sw ? "on" : "off");
+    ESP_LOGI(TAG, "NVS: loaded offset=%d teeth=%u sw_mode=%s teeth_manual=%s",
+             off, teeth, sw ? "on" : "off", tm ? "on" : "off");
 }
 
 void nvm_save(void) {
@@ -69,6 +78,7 @@ void nvm_save(void) {
     nvs_set_i16(h, "offset",  g_state.offset_tenths);
     nvs_set_u8(h,  "teeth",   g_state.teeth_total);
     nvs_set_u8(h,  "sw_mode", g_state.switch_mode ? 1 : 0);
+    nvs_set_u8(h,  "teeth_m", g_state.teeth_manual ? 1 : 0);
     nvs_commit(h);
     nvs_close(h);
     g_nvm_dirty = false;
@@ -102,9 +112,12 @@ void set_offset_tenths(int16_t val) {
 }
 
 uint32_t get_rpm(void) {
-    uint32_t period = g_avg_tooth_period_us;
+    uint32_t period = g_avg_rev_period_us;
     if (!g_synced_isr || period == 0) return 0;
-    return (uint32_t)(60000000ULL / ((uint64_t)period * g_state.teeth_total));
+    // Stale check: if no gap seen in >2 rev periods, signal is gone
+    const uint32_t elapsed = (uint32_t)esp_timer_get_time() - g_last_mt_us;
+    if (elapsed > period * 2) return 0;
+    return (uint32_t)(60000000UL / period);
 }
 
 bool get_synced(void) {
@@ -139,4 +152,22 @@ void set_teeth_total(uint8_t val) {
     g_state.teeth_total = val;
     xSemaphoreGive(state_mutex);
     g_nvm_dirty = true;
+}
+
+bool get_teeth_manual(void) {
+    xSemaphoreTake(state_mutex, portMAX_DELAY);
+    bool v = g_state.teeth_manual;
+    xSemaphoreGive(state_mutex);
+    return v;
+}
+
+void set_teeth_manual(bool val) {
+    xSemaphoreTake(state_mutex, portMAX_DELAY);
+    g_state.teeth_manual = val;
+    xSemaphoreGive(state_mutex);
+    g_nvm_dirty = true;
+}
+
+uint8_t get_teeth_auto(void) {
+    return g_teeth_auto;  // volatile, atomic read on 32-bit Xtensa
 }

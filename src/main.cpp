@@ -1,6 +1,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "shared.h"
 #include "web.h"
@@ -19,7 +20,18 @@ static void timing_task(void* arg) {
     // with flash erase timing. ESP-IDF NVS is thread-safe but flash ops
     // can add microseconds of latency — safer to do it between teeth.
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(500));
+        vTaskDelay(pdMS_TO_TICKS(250));
+
+        // Stale sync reset: if no gap seen in 2s, declare engine stopped
+        if (g_synced_isr) {
+            const uint32_t elapsed = (uint32_t)esp_timer_get_time() - g_last_mt_us;
+            if (elapsed > 2000000UL) {
+                g_synced_isr        = false;
+                g_avg_rev_period_us = 0;
+                g_sync_state        = SYNC_SEARCHING;
+            }
+        }
+
         if (g_nvm_dirty && !g_synced_isr) {
             nvm_save();
         }

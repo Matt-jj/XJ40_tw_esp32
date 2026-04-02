@@ -100,15 +100,19 @@ static esp_err_t handle_root(httpd_req_t* req) {
 
 // GET /api/status — JSON snapshot
 static esp_err_t handle_status(httpd_req_t* req) {
-    char buf[128];
+    char buf[256];
     snprintf(buf, sizeof(buf),
              "{\"rpm\":%lu,\"synced\":%s,\"offset_tenths\":%d,"
-             "\"switch_mode\":%s,\"teeth\":%u}",
+             "\"switch_mode\":%s,\"teeth\":%u,\"teeth_auto\":%u,"
+             "\"teeth_manual\":%s,\"teeth_confirmed\":%s}",
              (unsigned long)get_rpm(),
              get_synced() ? "true" : "false",
              get_offset_tenths(),
              get_switch_mode() ? "true" : "false",
-             get_teeth_total());
+             get_teeth_total(),
+             get_teeth_auto(),
+             get_teeth_manual() ? "true" : "false",
+             g_teeth_confirmed ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -136,6 +140,8 @@ static esp_err_t handle_config(httpd_req_t* req) {
             set_switch_mode(atoi(val) != 0);
         if (httpd_query_key_value(query, "teeth", val, sizeof(val)) == ESP_OK)
             set_teeth_total((uint8_t)atoi(val));
+        if (httpd_query_key_value(query, "teeth_manual", val, sizeof(val)) == ESP_OK)
+            set_teeth_manual(atoi(val) != 0);
     }
     httpd_resp_send(req, "ok", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;

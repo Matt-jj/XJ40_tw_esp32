@@ -39,7 +39,7 @@ static volatile bool     g_adv_fired = false;
 static volatile uint32_t g_adv_pw    = 0;      // predicted HIGH duration (us)
 
 // Advance rise: PB HIGH early, then schedule advance fall at predicted pulse width
-static void cb_adv_rise(void*) {
+void IRAM_ATTR cb_adv_rise(void*) {
     gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
     g_adv_fired = true;
     esp_timer_stop(g_tmr_adv_fall);
@@ -47,17 +47,17 @@ static void cb_adv_rise(void*) {
 }
 
 // Advance fall: PB LOW at predicted pulse end
-static void cb_adv_fall(void*) {
+void IRAM_ATTR cb_adv_fall(void*) {
     gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 0);
 }
 
 // Retard rise: PB HIGH delayed
-static void cb_ret_rise(void*) {
+void IRAM_ATTR cb_ret_rise(void*) {
     gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
 }
 
 // Retard fall: PB LOW delayed
-static void cb_ret_fall(void*) {
+void IRAM_ATTR cb_ret_fall(void*) {
     gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 0);
 }
 
@@ -85,7 +85,7 @@ static constexpr uint8_t  REV_BUF_N    = 6;
 static uint32_t rev_ts[REV_BUF_N]      = {};
 static uint8_t  rev_idx                = 0;
 static uint8_t  rev_count              = 0;
-static uint32_t avg_rev_period_us      = 0;
+// g_avg_rev_period_us (shared.cpp) — no local copy needed
 
 // Slew: smoothly transition offset at 0.5 deg/rev
 static constexpr int16_t  SLEW_STEP    = 5;
@@ -155,8 +155,31 @@ static void trigger_isr(void*) {
     const bool is_mt = (low_dur * 2 > lo_int[1] * 5);
 
     if (is_mt) {
-        mt_found    = true;
-        tooth_index = 0;
+        // Auto-detect: tooth_index before reset = normal teeth counted last revolution
+        if (mt_found) {
+            static uint8_t s_auto_candidate = 0;
+            static uint8_t s_auto_tally     = 0;
+            const uint8_t candidate = tooth_index + TEETH_MISSING + 1; // +1: gap-detection tooth is real but not counted in tooth_index
+            if (candidate >= 8 && candidate <= 60) {
+                if (candidate == s_auto_candidate) {
+                    if (++s_auto_tally >= 10) {
+                        g_teeth_auto      = candidate;
+                        g_teeth_confirmed = true;
+                        // Persist to NVS if not in manual override mode
+                        if (!g_state.teeth_manual) {
+                            g_state.teeth_total = candidate;
+                            g_nvm_dirty = true;
+                        }
+                    }
+                } else {
+                    s_auto_candidate = candidate;
+                    s_auto_tally     = 1;
+                }
+            }
+        }
+        mt_found      = true;
+        tooth_index   = 0;
+        g_last_mt_us  = now_us;
         // Normalise gap LOW: gap_low = 2×normal_lo + normal_hi
         // => normal_lo = (gap_low - last_hi) / 2
         lo_int[0]             = (low_dur - hi_int[0]) / 2;
@@ -173,7 +196,7 @@ static void trigger_isr(void*) {
             uint8_t oldest      = (rev_count < REV_BUF_N) ? 0 : rev_idx;
             uint8_t newest      = (rev_idx + REV_BUF_N - 1) % REV_BUF_N;
             uint8_t n_intervals = (rev_count < REV_BUF_N) ? (rev_count - 1) : (REV_BUF_N - 1);
-            avg_rev_period_us   = (rev_ts[newest] - rev_ts[oldest]) / n_intervals;
+            g_avg_rev_period_us   = (rev_ts[newest] - rev_ts[oldest]) / n_intervals;
         }
 
         // Slew offset toward target once per revolution
@@ -202,8 +225,9 @@ static void trigger_isr(void*) {
     static constexpr uint32_t RPM_LO_PER = 60000;
     static constexpr uint32_t RPM_HI_PER = 50000;
 
-    if (!mt_found || off == 0 || avg_rev_period_us == 0
-        || avg_rev_period_us > RPM_LO_PER) {
+    const bool teeth_ok = g_state.teeth_manual || g_teeth_confirmed;
+    if (!mt_found || off == 0 || g_avg_rev_period_us == 0
+        || g_avg_rev_period_us > RPM_LO_PER || !teeth_ok) {
         stop_all_timers();
         g_adv_fired = false;
         gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
@@ -224,8 +248,8 @@ static void trigger_isr(void*) {
     uint32_t cd = (uint32_t)(off > 0 ? off : -off) * tooth_per / 100;
 
     // Scale cd linearly between 1000–1200 RPM
-    if (avg_rev_period_us > RPM_HI_PER) {
-        uint32_t scale = (RPM_LO_PER - avg_rev_period_us) * 100
+    if (g_avg_rev_period_us > RPM_HI_PER) {
+        uint32_t scale = (RPM_LO_PER - g_avg_rev_period_us) * 100
                          / (RPM_LO_PER - RPM_HI_PER);
         cd = cd * scale / 100;
     }
@@ -290,10 +314,10 @@ void piggyback_setup(void) {
 
     // Create one-shot timers
     const esp_timer_create_args_t tmr_defs[4] = {
-        { cb_adv_rise, nullptr, ESP_TIMER_TASK, "pb_adv_rise", false },
-        { cb_adv_fall, nullptr, ESP_TIMER_TASK, "pb_adv_fall", false },
-        { cb_ret_rise, nullptr, ESP_TIMER_TASK, "pb_ret_rise", false },
-        { cb_ret_fall, nullptr, ESP_TIMER_TASK, "pb_ret_fall", false },
+        { cb_adv_rise, nullptr, ESP_TIMER_ISR, "pb_adv_rise", false },
+        { cb_adv_fall, nullptr, ESP_TIMER_ISR, "pb_adv_fall", false },
+        { cb_ret_rise, nullptr, ESP_TIMER_ISR, "pb_ret_rise", false },
+        { cb_ret_fall, nullptr, ESP_TIMER_ISR, "pb_ret_fall", false },
     };
     esp_timer_create(&tmr_defs[0], &g_tmr_adv_rise);
     esp_timer_create(&tmr_defs[1], &g_tmr_adv_fall);

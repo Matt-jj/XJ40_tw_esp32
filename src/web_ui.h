@@ -74,9 +74,8 @@ static const char WEB_UI_HTML[] = R"rawhtml(
   }
   .radio-wrap span { color: var(--text); font-size: 0.9em; }
 
-  /* Teeth slider */
-  .teeth-display { text-align: center; font-size: 2em; font-weight: bold;
-                   color: var(--accent); margin-bottom: 12px; }
+  /* Teeth input */
+  #teeth-input:read-only { opacity: 0.6; }
 
   .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
               display: inline-block; margin-right: 6px; }
@@ -117,6 +116,13 @@ static const char WEB_UI_HTML[] = R"rawhtml(
   <div class="range-dir">
     <span>◄ Retard</span><span>Advance ►</span>
   </div>
+  <div style="text-align:right; margin-top:10px;">
+    <button id="offset-apply"
+            style="padding:6px 20px; background:var(--accent); color:#fff;
+                   border:none; border-radius:6px; cursor:pointer; font-size:0.9em;">
+      Apply
+    </button>
+  </div>
 </div>
 
 <!-- Config card -->
@@ -129,17 +135,33 @@ static const char WEB_UI_HTML[] = R"rawhtml(
       <span>Enabled</span>
     </label>
   </div>
-  <div class="row" style="flex-direction: column; align-items: stretch; gap: 4px;">
-    <div class="card-title" style="margin-bottom: 4px;">Trigger Wheel Teeth</div>
-    <div class="teeth-display" id="teeth-display">36</div>
-    <input type="range" id="teeth" min="8" max="60" step="1" value="36"
-           oninput="updateTeeth(this)" onchange="sendConfig()">
-    <div class="range-labels"><span>8</span><span>Total including missing tooth</span><span>60</span></div>
+  <div class="row" style="flex-direction: column; align-items: flex-start; gap: 10px;">
+    <div class="card-title" style="margin-bottom: 0;">Trigger Wheel Teeth</div>
+    <div style="display:flex; align-items:center; gap:12px; width:100%;">
+      <input type="number" id="teeth-input" min="8" max="60" value="?" readonly
+             style="width:70px; font-size:1.8em; font-weight:bold; color:var(--accent);
+                    background:var(--bg); border:1px solid var(--border); border-radius:6px;
+                    text-align:center; padding:4px;">
+      <span style="color:var(--muted); font-size:0.8em;">Total teeth<br>(incl. missing)</span>
+      <button id="teeth-apply" onclick="applyTeeth()"
+              style="display:none; margin-left:auto; padding:6px 16px;
+                     background:var(--accent); color:#fff; border:none;
+                     border-radius:6px; cursor:pointer; font-size:0.9em;">Apply</button>
+    </div>
+    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;
+                  color:var(--muted); font-size:0.85em; user-select:none;">
+      <input type="checkbox" id="teeth-manual-cb" onchange="teethManualChanged(this)">
+      Manual override
+    </label>
+    <div id="teeth-msg" style="color:var(--red); font-size:0.8em; display:none;">
+      Stop engine to edit
+    </div>
   </div>
 </div>
 
 <script>
 let lastOffset = 0;
+let offsetPending = false;
 
 function fmt(tenths) {
   const v = tenths / 10;
@@ -152,14 +174,16 @@ const display = document.getElementById('offset-display');
 
 slider.addEventListener('input', () => {
   display.textContent = fmt(parseInt(slider.value));
-});
-slider.addEventListener('change', () => {
-  sendOffset(parseInt(slider.value));
+  display.style.color = 'var(--accent)';
+  offsetPending = true;
 });
 
-function updateTeeth(el) {
-  document.getElementById('teeth-display').textContent = parseInt(el.value);
-}
+document.getElementById('offset-apply').addEventListener('click', () => {
+  sendOffset(parseInt(slider.value));
+  lastOffset = parseInt(slider.value);
+  display.style.color = 'var(--text)';
+  offsetPending = false;
+});
 
 function sendOffset(tenths) {
   fetch('/api/offset?value=' + tenths, { method: 'POST' })
@@ -185,9 +209,55 @@ function toggleSwitch(el) {
 
 function sendConfig() {
   const sm = document.getElementById('switch-mode').checked ? 1 : 0;
-  const t  = document.getElementById('teeth').value;
-  fetch('/api/config?switch_mode=' + sm + '&teeth=' + t, { method: 'POST' })
+  fetch('/api/config?switch_mode=' + sm, { method: 'POST' })
     .catch(() => {});
+}
+
+let teethManualLocal = false;
+
+function updateTeethUI(d) {
+  const manualCb   = document.getElementById('teeth-manual-cb');
+  const teethInput = document.getElementById('teeth-input');
+  const applyBtn   = document.getElementById('teeth-apply');
+  const teethMsg   = document.getElementById('teeth-msg');
+
+  if (!manualCb._pending) {
+    manualCb.checked = d.teeth_manual;
+    teethManualLocal = d.teeth_manual;
+  }
+
+  if (!teethManualLocal) {
+    teethInput.value    = d.teeth_auto > 0 ? d.teeth_auto : '?';
+    teethInput.readOnly = true;
+    applyBtn.style.display = 'none';
+    teethMsg.style.display  = 'none';
+  } else if (d.rpm > 0) {
+    teethInput.value    = d.teeth;
+    teethInput.readOnly = true;
+    applyBtn.style.display = 'none';
+    teethMsg.style.display  = 'block';
+  } else {
+    if (teethInput.readOnly) teethInput.value = d.teeth;  // seed on first edit
+    teethInput.readOnly = false;
+    applyBtn.style.display = 'inline';
+    teethMsg.style.display  = 'none';
+  }
+}
+
+function teethManualChanged(el) {
+  el._pending = true;
+  teethManualLocal = el.checked;
+  fetch('/api/config?teeth_manual=' + (el.checked ? 1 : 0), { method: 'POST' })
+    .then(() => { el._pending = false; })
+    .catch(() => { el._pending = false; });
+}
+
+function applyTeeth() {
+  const val = parseInt(document.getElementById('teeth-input').value);
+  if (val >= 8 && val <= 60) {
+    fetch('/api/config?teeth=' + val + '&teeth_manual=1', { method: 'POST' })
+      .catch(() => {});
+  }
 }
 
 // Status polling
@@ -206,10 +276,11 @@ function poll() {
         badge.className = 'sync-badge sync-no';
       }
 
-      if (d.offset_tenths !== lastOffset) {
+      if (!offsetPending && d.offset_tenths !== lastOffset) {
         lastOffset = d.offset_tenths;
         slider.value = d.offset_tenths;
         display.textContent = fmt(d.offset_tenths);
+        display.style.color = 'var(--text)';
       }
 
       const sw = document.getElementById('switch-mode');
@@ -217,9 +288,7 @@ function poll() {
       sw.dataset.wasChecked = d.switch_mode ? 'true' : 'false';
       setSwitchColour(d.switch_mode);
 
-      const teethSlider = document.getElementById('teeth');
-      teethSlider.value = d.teeth;
-      updateTeeth(teethSlider);
+      updateTeethUI(d);
 
       document.getElementById('conn-dot').className = 'conn-dot live';
       document.getElementById('conn-label').textContent = 'Live';

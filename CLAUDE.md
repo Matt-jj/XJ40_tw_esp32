@@ -56,6 +56,28 @@ pio device monitor            # serial debug at 115200
 - **Manual teeth override** — checkbox (default OFF) enables manual teeth entry via number input. Only editable at RPM=0. Checkbox state and manual value both saved to NVM.
 - **Offset Apply button** — removed auto-send on slider change. Display goes orange (pending), Apply button commits. Poll won't overwrite slider while pending.
 
+## Session notes — 06-04-2026
+
+### Real-time resource audit
+
+Reviewed shared resources between `main.cpp` and `piggyback.cpp` for anything that could interrupt real-time operation. Key findings and fixes:
+
+**Fix 1 — `stop_all_timers()` guard (`s_timers_active`)**
+- `stop_all_timers()` was called on every passthrough tooth, causing 4× `esp_timer_stop()` spinlock acquisitions even when no timers were armed (~140 unnecessary cross-core spinlock calls per revolution).
+- Fix: `s_timers_active` bool flag. `stop_all_timers()` returns immediately if false. Set true only when a timer is actually armed.
+
+**Fix 2 — `trigger_isr` and NVS flash stall**
+- `trigger_isr` code was in flash. NVS writes suspend the flash instruction cache → ISR stalled for up to 30ms during a sector erase.
+- Fix: `IRAM_ATTR` on `trigger_isr` and `stop_all_timers()`. ISR code now lives in IRAM — completely immune to flash writes.
+- `ESP_INTR_FLAG_IRAM` added to `gpio_install_isr_service()` to match.
+- Removed `!g_synced_isr` guard on NVS save — settings now persist within 250ms of any change, engine running or stopped. Power-loss write-miss risk eliminated.
+- Note: `CONFIG_ESP_TIMER_SUPPORTS_ISR_DISPATCH_METHOD=y` (already set) is required — it places `esp_timer_start_once` / `esp_timer_stop` in IRAM, which is what previously caused the cache crash when IRAM_ATTR was attempted.
+
+### Remaining shared resource notes (low risk, no action needed)
+- `g_adv_pw` / `g_adv_fired` cross-core (Core 1 GPIO ISR ↔ Core 0 timer ISR): no memory barrier, but safe on ESP32-S3 (DRAM not L1-cached).
+- `g_state.teeth_total` written from ISR on auto-confirm: atomic uint8_t write, fires once only.
+- Stale sync reset writes 3 globals in sequence: practically impossible race (engine stopped for 2s before it triggers).
+
 ## TODO
 
 - [ ] **Re-capture with logic analyser** — confirm glitch is gone after ESP_TIMER_ISR fix. Use 500kHz+ for better timing resolution. Test at higher RPM if possible.

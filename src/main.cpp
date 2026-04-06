@@ -16,9 +16,8 @@ static void timing_task(void* arg) {
     ESP_LOGI(TAG, "Timing task started on core %d", xPortGetCoreID());
     piggyback_setup();
     // ISR handles everything — task just watches for deferred NVM save.
-    // Only save when not synced (no active signal) to avoid interfering
-    // with flash erase timing. ESP-IDF NVS is thread-safe but flash ops
-    // can add microseconds of latency — safer to do it between teeth.
+    // trigger_isr is IRAM_ATTR so flash writes no longer stall it.
+    // NVS can be written at any time without affecting timing.
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(250));
 
@@ -32,7 +31,7 @@ static void timing_task(void* arg) {
             }
         }
 
-        if (g_nvm_dirty && !g_synced_isr) {
+        if (g_nvm_dirty) {
             nvm_save();
         }
     }

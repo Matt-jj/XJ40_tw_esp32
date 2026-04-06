@@ -61,11 +61,15 @@ void IRAM_ATTR cb_ret_fall(void*) {
     gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 0);
 }
 
-static inline void stop_all_timers() {
+static bool s_timers_active = false;  // guard: only stop timers if actually armed
+
+static inline void IRAM_ATTR stop_all_timers() {
+    if (!s_timers_active) return;
     esp_timer_stop(g_tmr_adv_rise);
     esp_timer_stop(g_tmr_adv_fall);
     esp_timer_stop(g_tmr_ret_rise);
     esp_timer_stop(g_tmr_ret_fall);
+    s_timers_active = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +98,7 @@ static int16_t s_offset_current        = 0;
 // ---------------------------------------------------------------------------
 // ISR — fires on both edges of PIN_TRIGGER_IN
 // ---------------------------------------------------------------------------
-static void trigger_isr(void*) {
+static void IRAM_ATTR trigger_isr(void*) {
     g_isr_count = g_isr_count + 1;  // C++20: ++ on volatile is deprecated (misleading atomicity)
     const uint32_t now_us = (uint32_t)esp_timer_get_time();
     const bool     rising = gpio_get_level((gpio_num_t)PIN_TRIGGER_IN);
@@ -120,6 +124,7 @@ static void trigger_isr(void*) {
             const uint32_t cd = (uint32_t)(-off) * tooth_per / 100;
             esp_timer_stop(g_tmr_ret_fall);
             esp_timer_start_once(g_tmr_ret_fall, cd);
+            s_timers_active = true;
         } else {
             // Passthrough
             gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 0);
@@ -278,11 +283,13 @@ static void trigger_isr(void*) {
 
         esp_timer_stop(g_tmr_adv_rise);
         esp_timer_start_once(g_tmr_adv_rise, next_per - cd);
+        s_timers_active = true;
 
     } else {
         // -- RETARD ------------------------------------------------------
         esp_timer_stop(g_tmr_ret_rise);
         esp_timer_start_once(g_tmr_ret_rise, cd);
+        s_timers_active = true;
         s_adv_active = false;
     }
 }
@@ -325,7 +332,7 @@ void piggyback_setup(void) {
     esp_timer_create(&tmr_defs[3], &g_tmr_ret_fall);
 
     // Install GPIO ISR service and attach handler
-    gpio_install_isr_service(ESP_INTR_FLAG_LEVEL3);
+    gpio_install_isr_service(ESP_INTR_FLAG_LEVEL3 | ESP_INTR_FLAG_IRAM);
     gpio_isr_handler_add((gpio_num_t)PIN_TRIGGER_IN, trigger_isr, nullptr);
 
     ESP_LOGI(TAG, "Piggyback ISR ready  GPIO%d -> GPIO%d  enable=GPIO%d",

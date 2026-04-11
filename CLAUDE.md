@@ -78,9 +78,48 @@ Reviewed shared resources between `main.cpp` and `piggyback.cpp` for anything th
 - `g_state.teeth_total` written from ISR on auto-confirm: atomic uint8_t write, fires once only.
 - Stale sync reset writes 3 globals in sequence: practically impossible race (engine stopped for 2s before it triggers).
 
+## Session notes — 11-04-2026
+
+### Root cause fix — `gpio_get_level()` called from IRAM ISR
+
+Two remaining non-IRAM calls inside IRAM code were causing 558ms reboot cycles:
+
+1. `piggyback.cpp` — `gpio_get_level(PIN_TRIGGER_IN)` in `trigger_isr`
+2. `shared.h` — `gpio_get_level(PIN_ENABLE)` in `isr_get_offset_tenths()`
+
+When WiFi finishes initialising (~400ms after boot) it writes config to flash, suspending the instruction cache. The GPIO ISR fired during this window and tried to fetch `gpio_get_level()` from flash → cache fault → reboot. This repeated on every boot, explaining the exact 558ms crash cycle. The advance never applied because `g_teeth_confirmed` requires ~500ms (10 revolutions) but the crash always hit at ~400ms.
+
+**Fix:** Replaced both calls with direct peripheral register reads (always DRAM, flash-independent):
+- `(REG_READ(GPIO_IN_REG) >> PIN_TRIGGER_IN) & 1`
+- `(REG_READ(GPIO_IN_REG) >> PIN_ENABLE) & 1`
+- Added `#include "soc/gpio_reg.h"` to `shared.h`
+
+### Timing accuracy analysis (XJ40_esp32_11-04-26_sesh1/2/3)
+
+Three captures analysed: 1200 RPM 200kHz, 1200 RPM 1MHz, 3000 RPM 1MHz.
+
+**Key correction:** tooth period = `rev_period / 36` (uniform angular positions), not `rev_period / 35` (physical teeth count). The MT gap spans 2 positions; dividing by 35 inflates the tooth period and all derived degree values.
+
+**Results (5° advance, both speeds):**
+
+| | 1200 RPM | 3000 RPM |
+|---|---|---|
+| Advance delivered | 4.906° | 4.759° |
+| Systematic shortfall | −0.094° (−13µs) | −0.241° (−13µs) |
+| Rise jitter (1σ) | ±0.004° (±0.6µs) | ±0.020° (±1.1µs) |
+| Width error (mean) | +0.058° (+8µs) | +0.144° (+8µs) |
+
+- **13µs fixed latency** — `esp_timer` ISR dispatch overhead, constant across RPM range (13.00µs at 1200, 13.39µs at 3000). Systematic shortfall scales with RPM in degree terms but is within tolerance.
+- **Rise jitter** essentially at noise floor — dominated by emulator signal quality at 3000 RPM (CH2 period stdev 0.82µs), not ESP32 timer error. Real engine will have equivalent scatter from wheel runout and combustion events; ESP32 reacts to actual edges so this is self-correcting.
+- **Width error +8µs** — caused by using previous tooth's HIGH duration as fall timer prediction. Constant across RPM. Shortens the LOW duration (fall→rise) by 8µs, increasing the MT gap ratio from 3.001× to 3.023× — marginally easier for ECU to detect the gap.
+- **No crashes, no outliers, no interrupt conflicts** in any capture after the gpio_get_level fix.
+
+### Analysis rules established
+- Only make claims about firmware/hardware behaviour backed by evidence (code, captures, datasheets). No assumptions.
+- Challenge assumptions in both directions — ask for evidence before proceeding.
+
 ## TODO
 
-- [ ] **Re-capture with logic analyser** — confirm glitch is gone after ESP_TIMER_ISR fix. Use 500kHz+ for better timing resolution. Test at higher RPM if possible.
 - [ ] **Verify retard mode** — retard not yet confirmed working via capture. Test at 5° retard.
 - [ ] **Confirm pin assignments** — GPIO4/5/6 marked provisional. Verify against hardware schematic before final installation.
 - [ ] **Strip unused libraries** — once code is finalised, disable unused ESP-IDF components via `sdkconfig.defaults` to reduce flash usage and eliminate potential instability from unused code. Key candidates:

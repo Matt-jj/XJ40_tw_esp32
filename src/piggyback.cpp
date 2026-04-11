@@ -22,6 +22,11 @@
 #include "esp_timer.h"
 #include "esp_attr.h"
 #include "esp_log.h"
+#include "soc/gpio_reg.h"
+
+// Direct GPIO register writes — IRAM-safe, no flash dependency
+#define REG_PB_HIGH() REG_WRITE(GPIO_OUT_W1TS_REG, (1UL << PIN_TRIGGER_OUT))
+#define REG_PB_LOW()  REG_WRITE(GPIO_OUT_W1TC_REG, (1UL << PIN_TRIGGER_OUT))
 
 static const char* TAG = "piggyback";
 
@@ -40,7 +45,7 @@ static volatile uint32_t g_adv_pw    = 0;      // predicted HIGH duration (us)
 
 // Advance rise: PB HIGH early, then schedule advance fall at predicted pulse width
 void IRAM_ATTR cb_adv_rise(void*) {
-    gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
+    REG_PB_HIGH();
     g_adv_fired = true;
     esp_timer_stop(g_tmr_adv_fall);
     esp_timer_start_once(g_tmr_adv_fall, g_adv_pw);
@@ -48,17 +53,17 @@ void IRAM_ATTR cb_adv_rise(void*) {
 
 // Advance fall: PB LOW at predicted pulse end
 void IRAM_ATTR cb_adv_fall(void*) {
-    gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 0);
+    REG_PB_LOW();
 }
 
 // Retard rise: PB HIGH delayed
 void IRAM_ATTR cb_ret_rise(void*) {
-    gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
+    REG_PB_HIGH();
 }
 
 // Retard fall: PB LOW delayed
 void IRAM_ATTR cb_ret_fall(void*) {
-    gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 0);
+    REG_PB_LOW();
 }
 
 static bool s_timers_active = false;  // guard: only stop timers if actually armed
@@ -101,7 +106,7 @@ static int16_t s_offset_current        = 0;
 static void IRAM_ATTR trigger_isr(void*) {
     g_isr_count = g_isr_count + 1;  // C++20: ++ on volatile is deprecated (misleading atomicity)
     const uint32_t now_us = (uint32_t)esp_timer_get_time();
-    const bool     rising = gpio_get_level((gpio_num_t)PIN_TRIGGER_IN);
+    const bool     rising = (REG_READ(GPIO_IN_REG) >> PIN_TRIGGER_IN) & 1;
 
     if (!rising) {
         // -- FALLING EDGE ------------------------------------------------
@@ -127,7 +132,7 @@ static void IRAM_ATTR trigger_isr(void*) {
             s_timers_active = true;
         } else {
             // Passthrough
-            gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 0);
+            REG_PB_LOW();
         }
         return;
     }
@@ -136,7 +141,7 @@ static void IRAM_ATTR trigger_isr(void*) {
     if (s_first_edge) {
         s_first_edge = false;
         s_last_rise  = now_us;
-        gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
+        REG_PB_HIGH();
         s_adv_active = false;
         return;
     }
@@ -150,7 +155,7 @@ static void IRAM_ATTR trigger_isr(void*) {
     lo_int[0] = low_dur;
 
     if (lo_int[1] == 0) {
-        gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
+        REG_PB_HIGH();
         s_adv_active = false;
         return;
     }
@@ -160,8 +165,8 @@ static void IRAM_ATTR trigger_isr(void*) {
     const bool is_mt = (low_dur * 2 > lo_int[1] * 5);
 
     if (is_mt) {
-        // Auto-detect: tooth_index before reset = normal teeth counted last revolution
-        if (mt_found) {
+        // Auto-detect: skipped entirely when manual override is active
+        if (mt_found && !g_state.teeth_manual) {
             static uint8_t s_auto_candidate = 0;
             static uint8_t s_auto_tally     = 0;
             const uint8_t candidate = tooth_index + TEETH_MISSING + 1; // +1: gap-detection tooth is real but not counted in tooth_index
@@ -170,8 +175,8 @@ static void IRAM_ATTR trigger_isr(void*) {
                     if (++s_auto_tally >= 10) {
                         g_teeth_auto      = candidate;
                         g_teeth_confirmed = true;
-                        // Persist to NVS if not in manual override mode
-                        if (!g_state.teeth_manual) {
+                        // Only write NVS if value has actually changed
+                        if (candidate != g_state.teeth_total) {
                             g_state.teeth_total = candidate;
                             g_nvm_dirty = true;
                         }
@@ -235,7 +240,7 @@ static void IRAM_ATTR trigger_isr(void*) {
         || g_avg_rev_period_us > RPM_LO_PER || !teeth_ok) {
         stop_all_timers();
         g_adv_fired = false;
-        gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
+        REG_PB_HIGH();
         s_adv_active = false;
         return;
     }
@@ -245,7 +250,7 @@ static void IRAM_ATTR trigger_isr(void*) {
     const uint32_t tooth_per = pred_hi + pred_lo;
 
     if (tooth_per < 20) {
-        gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
+        REG_PB_HIGH();
         s_adv_active = false;
         return;
     }
@@ -265,7 +270,7 @@ static void IRAM_ATTR trigger_isr(void*) {
             g_adv_fired  = false;
             s_adv_active = true;
         } else {
-            gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 1);
+            REG_PB_HIGH();
             s_adv_active = false;
         }
 
@@ -303,7 +308,7 @@ void piggyback_setup(void) {
     out_cfg.pin_bit_mask = (1ULL << PIN_TRIGGER_OUT);
     out_cfg.mode         = GPIO_MODE_OUTPUT;
     gpio_config(&out_cfg);
-    gpio_set_level((gpio_num_t)PIN_TRIGGER_OUT, 0);
+    REG_PB_LOW();
 
     // Enable pin (active-low, internal pull-up)
     gpio_config_t en_cfg = {};

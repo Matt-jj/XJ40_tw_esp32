@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "driver/gpio.h"
+#include "soc/gpio_reg.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -87,7 +88,7 @@ uint8_t  get_teeth_auto(void);
 // g_state fields are aligned types — atomic reads on 32-bit Xtensa.
 // ---------------------------------------------------------------------------
 static inline IRAM_ATTR int16_t isr_get_offset_tenths(void) {
-    if (g_state.switch_mode && gpio_get_level((gpio_num_t)PIN_ENABLE)) return 0;
+    if (g_state.switch_mode && ((REG_READ(GPIO_IN_REG) >> PIN_ENABLE) & 1)) return 0;
     return g_state.offset_tenths;
 }
 

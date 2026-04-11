@@ -9,3 +9,6 @@ build/
 
 # Claude Code
 .claude/
+# Logic analyser captures
+*.sr
+*.pvs

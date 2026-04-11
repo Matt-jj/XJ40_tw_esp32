@@ -16,6 +16,7 @@
 #define PIN_TRIGGER_OUT      5
 #define PIN_ENABLE           6   // active-low switch input (pull-up enabled)
                                  // LOW  = offset active, HIGH = bypass
+#define PIN_STATUS_LED      21   // WS2812 data — GPIO21 (ESP32-S3-Zero, verify if clone differs)
 
 // Trigger wheel defaults
 #define DEFAULT_TEETH_TOTAL  36

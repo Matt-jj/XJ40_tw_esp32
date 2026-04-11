@@ -6,6 +6,7 @@
 #include "shared.h"
 #include "web.h"
 #include "piggyback.h"
+#include "status_led.h"
 
 static const char* TAG = "main";
 
@@ -34,6 +35,8 @@ static void timing_task(void* arg) {
         if (g_nvm_dirty) {
             nvm_save();
         }
+
+        status_led_update();
     }
 }
 
@@ -44,6 +47,7 @@ extern "C" void app_main(void) {
     nvs_flash_init();
     shared_init();
     nvm_load();
+    status_led_init();
 
     // Core 0 — WiFi AP, DNS, HTTP server
     xTaskCreatePinnedToCore(web_task,    "web",    8192, NULL,  5, NULL, 0);

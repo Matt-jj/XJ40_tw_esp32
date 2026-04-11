@@ -122,6 +122,16 @@ Three captures analysed: 1200 RPM 200kHz, 1200 RPM 1MHz, 3000 RPM 1MHz.
 
 - [ ] **Verify retard mode** — retard not yet confirmed working via capture. Test at 5° retard.
 - [ ] **Confirm pin assignments** — GPIO4/5/6 marked provisional. Verify against hardware schematic before final installation.
+
+### Future features (post-prototype)
+
+- [ ] **RPM-based timing map** — replace single offset value with a multi-point map of advance/retard vs RPM (e.g. 8–10 breakpoints). Interpolate between points at runtime. UI would need a curve editor or table. NVS storage would need to grow to hold the map. This is the natural next step once the base timing is dialled in on the car — allows replicating a proper advance curve rather than a fixed offset.
+
+- [ ] **Knock sensor input** — analogue or digital input from a knock sensor (e.g. piezo on the block). If knock detected while advance is active, automatically retard by a small step (e.g. 1°) and hold for N revolutions before allowing advance to recover. Acts as a closed-loop safety net against over-advance damaging the engine. Key design questions before implementing:
+  - Knock sensor signal conditioning (piezo output needs filtering/amplification before ADC)
+  - Knock detection threshold — fixed or auto-calibrating?
+  - Recovery rate — how quickly to re-advance after knock clears?
+  - Interaction with the timing map (above) — knock retard would offset the map value, not replace it
 - [ ] **Strip unused libraries** — once code is finalised, disable unused ESP-IDF components via `sdkconfig.defaults` to reduce flash usage and eliminate potential instability from unused code. Key candidates:
   - `CONFIG_BT_ENABLED=n` — Bluetooth (~80KB+)
   - `CONFIG_MBEDTLS_*` — TLS/SSL (~100KB, not needed for plain HTTP)

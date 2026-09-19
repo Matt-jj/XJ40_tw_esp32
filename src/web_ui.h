@@ -86,7 +86,7 @@ static const char WEB_UI_HTML[] = R"rawhtml(
 <body>
 
 <h1>XJ40 Trigger</h1>
-<p class="ver">v)rawhtml" FIRMWARE_VERSION R"rawhtml(</p>
+<p class="ver">v)rawhtml" FIRMWARE_VERSION R"rawhtml( &middot; )rawhtml" FIRMWARE_GIT_HASH R"rawhtml(</p>
 
 <!-- Status card -->
 <div class="card">

@@ -7,7 +7,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define FIRMWARE_VERSION     "0.1.0"
+#include "version.h"   // FIRMWARE_VERSION / FIRMWARE_GIT_HASH
+
 #define AP_SSID              "XJ40-Trigger"
 #define AP_IP                "192.168.4.1"
 

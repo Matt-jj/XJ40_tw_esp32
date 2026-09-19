@@ -44,6 +44,8 @@ static void timing_task(void* arg) {
 // Entry point (Core 0)
 // ---------------------------------------------------------------------------
 extern "C" void app_main(void) {
+    ESP_LOGI(TAG, "XJ40 Trigger v%s (%s)", FIRMWARE_VERSION, FIRMWARE_GIT_HASH);
+
     nvs_flash_init();
     shared_init();
     nvm_load();

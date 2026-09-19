@@ -142,6 +142,7 @@ Three captures analysed: 1200 RPM 200kHz, 1200 RPM 1MHz, 3000 RPM 1MHz.
 
 ## Key files
 
+- [src/version.h](src/version.h) — `MAJOR.MINOR` version + in-source history log (git hash injected by CMake at build time)
 - [src/main.cpp](src/main.cpp) — app_main, task creation, stale sync reset, deferred NVM save
 - [src/piggyback.h](src/piggyback.h) / [src/piggyback.cpp](src/piggyback.cpp) — trigger wheel ISR, advance/retard timing, auto-detect
 - [src/shared.h](src/shared.h) / [src/shared.cpp](src/shared.cpp) — shared state, mutex, accessors, gap-based RPM

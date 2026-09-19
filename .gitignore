@@ -12,3 +12,7 @@ build/
 # Logic analyser captures
 *.sr
 *.pvs
+# PulseView/sigrok often saves without an extension - ignore by convention:
+captures/
+*_sesh[0-9]
+Trigger_wheel
